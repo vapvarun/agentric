@@ -8,6 +8,22 @@ new version heading in the same commit.
 
 ## [Unreleased]
 
+## [0.442.0] - 2026-09-15
+### Added
+- **Reassign a proposed task, or accept it and run it straight away, from its Inbox card.** Before, a
+  proposal filed to the wrong person or agent, or to nobody, had to be accepted first and then fixed on
+  the board. Running it took another trip to the task's Run button. Each pending row now has an
+  assignee picker (claude-code agents plus team members) that re-points the task without deciding it:
+  the task stays `proposed`, and a newly assigned human still hears nothing until it's accepted. When
+  the assignee is an agent, the row also offers **Accept & run**, which accepts the task and dispatches
+  it in the same click. `POST /api/tasks/proposals/decide` gains `action: 'assign'`, an optional
+  `assignee` (also allowed alongside `accept`/`dismiss`) and `run: true`. These use the existing
+  decide gate (the run's accountable human or an owner/admin). `run` also needs the caller to be allowed
+  to run that agent, and checks it BEFORE accepting, so a refused run never half-accepts the task.
+  Re-assignments are audited as `task.proposal.reassigned`.
+  **For users:** On a task an agent proposes, you can now change who it's assigned to right on the
+  Inbox card, and "Accept & run" starts the agent on it immediately. [Open Inbox](#/inbox)
+
 ## [0.441.0] - 2026-09-15
 ### Added
 - **A proposed-task card in the Inbox now carries what you need to decide on it.** The `task.proposed`

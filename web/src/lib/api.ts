@@ -2148,7 +2148,7 @@ export const api = {
   commentTask: (id: string, body: string) => call<{ ok: boolean; task?: Task; error?: string }>('POST', `/api/tasks/${id}/comment`, { body }),
   dispatchTask: (id: string) => call<{ ok: boolean; sessionId?: string; error?: string }>('POST', `/api/tasks/${id}/dispatch`),
   /** Accept (→ todo) or dismiss (→ cancelled) agent-proposed tasks: by `ids`, or every task on one Inbox card (`messageId`). */
-  decideTaskProposals: (b: { ids?: string[]; messageId?: string; action: 'accept' | 'dismiss' }) => call<{ ok: boolean; decided?: string[]; denied?: number; error?: string }>('POST', '/api/tasks/proposals/decide', b),
+  decideTaskProposals: (b: { ids?: string[]; messageId?: string; action: 'accept' | 'dismiss' | 'assign'; assignee?: string | null; run?: boolean }) => call<{ ok: boolean; decided?: string[]; denied?: number; dispatched?: Array<{ id: string; sessionId?: string; error?: string }>; error?: string }>('POST', '/api/tasks/proposals/decide', b),
   taskProposalsSetting: () => call<{ enabled: boolean; error?: string }>('GET', '/api/settings/task-proposals'),
   saveTaskProposalsSetting: (enabled: boolean) => call<{ ok: boolean; enabled?: boolean; error?: string }>('PUT', '/api/settings/task-proposals', { enabled }),
   deleteTask: (id: string) => call<{ ok: boolean; error?: string }>('DELETE', `/api/tasks/${id}`),

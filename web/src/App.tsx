@@ -2014,7 +2014,7 @@ function Console({ me }: { me: Member }) {
           {route === 'new-agent' && <NewAgentPage me={me} onCreated={async (id) => { await refreshState(); nav('agents', id) }} />}
           {route === 'sessions' && <SessionsPage me={me} members={members} sessions={sessions} waiting={waiting} selected={selected} hiddenTabs={hiddenTabs} metrics={state?.sessionMetrics ?? 'both'} onOpen={openTerminal} onCloseTab={closeTab} onActivity={clearAlerts} onSpawn={() => nav('agents')} onStop={stopSession} onDelete={deleteSession} onRate={rateSession} onRename={renameSession} onTransfer={transferSession} onBulkStop={stopSessions} onBulkDelete={deleteSessions} urlQuery={urlQuery} onFiltersChange={setUrlQuery} />}
           {route === 'overview' && me.role === 'owner' && <OverviewPage me={me} sessions={sessions} doneToday={doneToday} members={members} agents={state?.agents ?? []} maturity={maturity} serverTz={state?.serverTz} onOpen={openTerminal} nav={nav} />}
-          {route === 'inbox' && <InboxPage messages={messages} me={me} members={members} onOpen={openTerminal} onOpenArtifact={openArtifact} onOpenTask={(id) => nav('tasks', id)} onOpenGoal={(id) => nav('goals', id)} />}
+          {route === 'inbox' && <InboxPage messages={messages} me={me} members={members} agents={state?.agents ?? []} onOpen={openTerminal} onOpenArtifact={openArtifact} onOpenTask={(id) => nav('tasks', id)} onOpenGoal={(id) => nav('goals', id)} />}
           {route === 'cockpit' && <CockpitPage sessions={sessions} onOpenChat={(id) => nav('chat', id)} onOpenTerminal={openTerminal} nav={nav} />}
           {route === 'chat' && <ChatPage agents={state?.agents ?? []} sessions={sessions} messages={messages} selected={detail} onSelect={(id) => nav('chat', id)} onOpenTerminal={openTerminal} />}
           {route === 'connectors' && <ConnectionsPage me={me} tab={detail} onTab={(t) => nav('connectors', t)} />}
@@ -6365,7 +6365,7 @@ function FeedPage({ me, members, sessions, nav, onOpen, query, setQuery }: { me:
   )
 }
 
-function InboxPage({ messages: propMessages, me, members, onOpen, onOpenArtifact, onOpenTask, onOpenGoal }: { messages: Msg[]; me: Member; members: Member[]; onOpen: (tmux: string, title: string) => void; onOpenArtifact: (id: string) => void; onOpenTask: (id: string) => void; onOpenGoal: (id: string) => void }) {
+function InboxPage({ messages: propMessages, me, members, agents, onOpen, onOpenArtifact, onOpenTask, onOpenGoal }: { messages: Msg[]; me: Member; members: Member[]; agents: AgentInfo[]; onOpen: (tmux: string, title: string) => void; onOpenArtifact: (id: string) => void; onOpenTask: (id: string) => void; onOpenGoal: (id: string) => void }) {
   // Read state is now PER-MEMBER + server-backed (m.read): it syncs across this member's devices/tabs
   // and one admin marking read no longer touches another's badge. `readIds` optimistically bridges the
   // gap until the next poll reflects the server truth.
@@ -6456,7 +6456,7 @@ function InboxPage({ messages: propMessages, me, members, onOpen, onOpenArtifact
           <div className="rounded-lg border border-dashed p-3 text-center text-xs text-muted-foreground">Nothing waiting on you. 🎉</div>
         ) : (
           <div className="space-y-2">
-            {action.map((m) => <ActionItem key={m.id} m={m} me={me} members={members} onOpen={onOpen} onDismiss={dismiss} />)}
+            {action.map((m) => <ActionItem key={m.id} m={m} me={me} members={members} agents={agents} onOpen={onOpen} onDismiss={dismiss} />)}
           </div>
         )}
       </section>
@@ -6580,11 +6580,14 @@ function proposalDue(dueAt: number): { label: string; tone: string; overdue: boo
 }
 
 /** A proposed task, laid out to be decided on: full title, why (body), how urgent, by when, for whom. */
-function ProposedTaskItem({ t, members, busy, onDecide }: { t: ProposedTaskRow; members: Member[]; busy: boolean; onDecide: (action: 'accept' | 'dismiss', ids: string[]) => void }) {
+function ProposedTaskItem({ t, members, agents, busy, onDecide }: { t: ProposedTaskRow; members: Member[]; agents: AgentInfo[]; busy: boolean; onDecide: (action: 'accept' | 'dismiss' | 'assign', ids: string[], extra?: { assignee?: string | null; run?: boolean }) => void }) {
   const [expanded, setExpanded] = useState(false)
   const pending = t.status === 'proposed'
   const due = t.dueAt && pending ? proposalDue(t.dueAt) : null
   const long = (t.body?.length ?? 0) > 180 || (t.body?.split('\n').length ?? 0) > 2 || !!t.criteria
+  // Only a claude-code agent can be dispatched from a task, so those are the agents offered — same list as the board.
+  const runnable = agents.filter((a) => a.runtime === 'claude-code')
+  const toAgent = (t.assignee ?? '').startsWith('agent:')
   return (
     <li className={`rounded-md border px-2.5 py-2 text-xs ${pending ? 'border-violet-200 bg-background' : 'border-transparent bg-transparent'}`}>
       <div className="flex min-w-0 flex-wrap items-start gap-2 sm:flex-nowrap">
@@ -6593,7 +6596,18 @@ function ProposedTaskItem({ t, members, busy, onDecide }: { t: ProposedTaskRow; 
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
             {t.priority !== undefined && <span className="inline-flex items-center gap-1"><PriorityPips p={t.priority} />{PRIORITY_LABEL[t.priority]}</span>}
             {due && <span className={`inline-flex items-center gap-0.5 rounded px-1 ${due.tone}`}><Clock className="h-3 w-3" />{due.label}</span>}
-            {t.assignee && <span>→ {principalLabel(t.assignee, members)}</span>}
+            {pending ? (
+              <Select value={t.assignee || 'none'} onValueChange={(v) => { const next = !v || v === 'none' ? null : v; if (next !== (t.assignee ?? null)) onDecide('assign', [t.id], { assignee: next }) }}>
+                <SelectTrigger size="sm" className="h-6 max-w-44 gap-1 border-dashed px-1.5 text-[11px]" disabled={busy} aria-label="Assignee">
+                  <SelectValue>{(v) => '→ ' + (!v || v === 'none' ? 'Unassigned' : principalLabel(v as string, members))}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                  {runnable.map((a) => <SelectItem key={a.id} value={`agent:${a.id}`}><span className="flex items-center gap-1.5"><AgentIcon icon={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{a.id}</span></SelectItem>)}
+                  {members.map((mm) => <SelectItem key={mm.id} value={mm.id}><span className="flex items-center gap-1.5"><MemberAvatar member={mm} className="h-4 w-4 text-[8px]" />{mm.name || mm.email}</span></SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : t.assignee && <span>→ {principalLabel(t.assignee, members)}</span>}
             {t.labels?.map((l) => <Badge key={l} variant="outline" className="px-1 py-0 text-[10px] font-normal">{l}</Badge>)}
             {t.createdAt && pending && <span title={new Date(t.createdAt).toLocaleString()}>filed {timeAgo(t.createdAt)} ago</span>}
           </div>
@@ -6601,6 +6615,7 @@ function ProposedTaskItem({ t, members, busy, onDecide }: { t: ProposedTaskRow; 
         {pending ? (
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => onDecide('accept', [t.id])}><Check className="mr-1 h-3 w-3" />Accept</Button>
+            {toAgent && <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={busy} title={`Accept and dispatch it to ${t.assignee!.slice('agent:'.length)} now`} onClick={() => onDecide('accept', [t.id], { run: true })}><Play className="mr-1 h-3 w-3" />Accept &amp; run</Button>}
             <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy} onClick={() => onDecide('dismiss', [t.id])}>Dismiss</Button>
           </div>
         ) : (
@@ -6636,7 +6651,7 @@ const REVIEW_ICON: Record<string, LucideIcon> = {
 /** An action-required item (approval · question · waiting-notification · open review card) — a compact,
  *  coloured card with its controls inline. Pending only; once resolved the item drops into the read-only
  *  Activity feed. */
-function ActionItem({ m, me, members, onOpen, onDismiss }: { m: Msg; me: Member; members: Member[]; onOpen: (tmux: string, title: string) => void; onDismiss: (id: string) => void }) {
+function ActionItem({ m, me, members, agents, onOpen, onDismiss }: { m: Msg; me: Member; members: Member[]; agents: AgentInfo[]; onOpen: (tmux: string, title: string) => void; onDismiss: (id: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [answer, setAnswer] = useState('')
   const [hint, setHint] = useState('')
@@ -6652,11 +6667,12 @@ function ActionItem({ m, me, members, onOpen, onDismiss }: { m: Msg; me: Member;
   if (m.type === 'task.proposed') {
     const tasks = (m.args as { tasks?: ProposedTaskRow[] } | undefined)?.tasks ?? []
     const pending = tasks.filter((t) => t.status === 'proposed')
-    const decide = async (action: 'accept' | 'dismiss', ids?: string[]) => {
+    const decide = async (action: 'accept' | 'dismiss' | 'assign', ids?: string[], extra?: { assignee?: string | null; run?: boolean }) => {
       setBusy(true); setHint('')
-      const r = await api.decideTaskProposals(ids ? { ids, action } : { messageId: m.id, action })
+      const r = await api.decideTaskProposals({ ...(ids ? { ids } : { messageId: m.id }), action, ...extra })
       setBusy(false)
       if (r.error) setHint('⚠ ' + r.error)
+      else if (extra?.run && r.dispatched?.some((d) => d.sessionId)) setHint('accepted — a session is running it')
     }
     return (
       <div className="rounded-lg border border-violet-300 bg-violet-50/40 px-3 py-2.5">
@@ -6671,7 +6687,7 @@ function ActionItem({ m, me, members, onOpen, onDismiss }: { m: Msg; me: Member;
               {' '}<a href={navHref('sessions', 'aos-' + m.sessionId)} onClick={(e) => { e.preventDefault(); open() }} className="text-violet-700 no-underline hover:underline">View the run</a>
             </p>
             <ul className="mt-1.5 space-y-1.5">
-              {tasks.map((t) => <ProposedTaskItem key={t.id} t={t} members={members} busy={busy} onDecide={decide} />)}
+              {tasks.map((t) => <ProposedTaskItem key={t.id} t={t} members={members} agents={agents} busy={busy} onDecide={decide} />)}
             </ul>
           </div>
           {time}
