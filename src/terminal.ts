@@ -5949,11 +5949,24 @@ export class TerminalManager {
     return r ? proposedTaskRefs(r.args).map((t) => t.id) : undefined;
   }
 
-  /** Stamp each proposed task's CURRENT status onto its card at read time (like approvals' JOIN), so a
-   *  task decided on the board shows decided in the Inbox without the card having to be rewritten. */
+  /** Stamp each proposed task's CURRENT state onto its card at read time (like approvals' JOIN), so a
+   *  task decided on the board shows decided in the Inbox without the card having to be rewritten.
+   *  The card only snapshots id/title/assignee, which left the reviewer deciding on a truncated title
+   *  alone — so the fields that make it decidable (why, how urgent, by when) come from the live task too. */
   private hydrateTaskProposalCard(m: FeedMessage): FeedMessage {
-    const tasks = proposedTaskRefs(m.args !== undefined ? JSON.stringify(m.args) : null)
-      .map((t) => ({ ...t, status: this.os.tasks.get(t.id)?.status ?? 'deleted' }));
+    const tasks = proposedTaskRefs(m.args !== undefined ? JSON.stringify(m.args) : null).map((t) => {
+      const live = this.os.tasks.get(t.id);
+      if (!live) return { ...t, status: 'deleted' as const };
+      const body = live.body.trim();
+      return {
+        ...t, title: live.title, ...(live.assignee ? { assignee: live.assignee } : {}), status: live.status,
+        priority: live.priority, createdAt: live.createdAt,
+        ...(body ? { body: body.length > PROPOSAL_BODY_MAX ? body.slice(0, PROPOSAL_BODY_MAX).trimEnd() + '…' : body } : {}),
+        ...(live.dueAt ? { dueAt: live.dueAt } : {}),
+        ...(live.labels.length ? { labels: live.labels } : {}),
+        ...(live.criteria ? { criteria: live.criteria } : {}),
+      };
+    });
     return { ...m, args: { tasks } };
   }
 
@@ -9217,6 +9230,9 @@ function proposedTaskRefs(args: string | null): ProposedTaskRef[] {
     return Array.isArray(a.tasks) ? (a.tasks as ProposedTaskRef[]).filter((t) => t && typeof t.id === 'string') : [];
   } catch { return []; }
 }
+
+/** How much of a proposed task's body rides on its Inbox card — enough to decide on; the board has the rest. */
+const PROPOSAL_BODY_MAX = 1200;
 
 const taskProposalTitle = (n: number): string => (n === 1 ? 'Proposed a task' : `Proposed ${n} tasks`);
 const taskProposalBody = (tasks: ProposedTaskRef[]): string =>

@@ -1091,7 +1091,7 @@ const TOOLS = [
       additionalProperties: false,
       properties: {
         title: { type: 'string', description: 'A short imperative title, e.g. "Fix null-deref in billing.ts".' },
-        body: { type: 'string', description: 'Markdown detail / acceptance criteria — enough for whoever works it.' },
+        body: { type: 'string', description: 'Markdown detail / acceptance criteria — enough for whoever works it. For a PROPOSAL (no autoDispatch) this is what the human reads to accept or dismiss it: lead with WHY it matters and why now, and link the source record (ticket/conversation/PR). Put any deadline in `due`, not only in the title.' },
         assignee: { type: 'string', description: 'Who works it: "agent:<id>" to hand off to another agent, a member id, or "me" for yourself. Omit to leave it open for anyone to claim.' },
         priority: { type: 'number', minimum: 0, maximum: 3, description: '0 urgent … 3 low (default 2).' },
         labels: { type: 'array', items: { type: 'string' }, description: 'Optional freeform labels.' },

@@ -8,6 +8,23 @@ new version heading in the same commit.
 
 ## [Unreleased]
 
+## [0.441.0] - 2026-09-15
+### Added
+- **A proposed-task card in the Inbox now carries what you need to decide on it.** The `task.proposed`
+  card only snapshotted each task's id, title and assignee, and truncated the title to one line. A real
+  expresstech card read "QSM SLA: conv 269039 follow-up wait at 46h (hits th…", which cut off the
+  deadline, the reason and the urgency on a card that was already a day old.
+  `hydrateTaskProposalCard` now reads the live task for its body (capped at 1,200 chars), priority, due
+  date, labels, definition of done and filing time, as well as its current title and assignee. Each row
+  shows the title over two lines, a priority marker, an hour-precise countdown ("due in 4h" /
+  "overdue 20h"), the assignee's name rather than the raw id, and the body's first two lines with links
+  clickable. "Show more" expands the rest. A past-due row says accepting may be too late. A row with no
+  body says the agent gave no detail, and the card links to the run that filed it. `task_create`'s
+  `body` description now tells an agent that a proposal's body is what the human decides on: lead with
+  why it matters and why now, link the source record, and put a deadline in `due`.
+  **For users:** Tasks an agent proposes now show why they matter, how urgent they are and when
+  they're due, right on the Inbox card, so you can accept or dismiss without opening each one. [Open Inbox](#/inbox)
+
 ## [0.440.0] - 2026-09-11
 ### Added
 - **A task's Session tab now has every control the Sessions page has.** It used to render a bare
