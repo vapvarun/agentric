@@ -4107,23 +4107,50 @@ async function handle(os: AgentOS, tm: TerminalManager, autos: Automations, req:
   if (method === 'POST' && p === '/api/tasks/proposals/decide') {
     const b = await readBody(req);
     const action = String(b.action || '');
-    if (action !== 'accept' && action !== 'dismiss') return sendJson(res, 400, { error: 'action must be accept or dismiss' });
+    if (action !== 'accept' && action !== 'dismiss' && action !== 'assign') return sendJson(res, 400, { error: 'action must be accept, dismiss or assign' });
     const ids: string[] = typeof b.messageId === 'string' && b.messageId
       ? (tm.taskProposalCardTasks(b.messageId) ?? [])
       : Array.isArray(b.ids) ? b.ids.map(String) : [];
     if (!ids.length) return sendJson(res, 400, { error: 'no tasks named' });
+    // The reviewer can re-point a proposal at the right person/agent from the card itself — alone
+    // (`assign`, the task stays proposed) or in the same click as accepting it. `null` clears it.
+    const hasAssignee = 'assignee' in b;
+    const assignee = hasAssignee ? (typeof b.assignee === 'string' && b.assignee ? b.assignee : null) : undefined;
+    if (action === 'assign' && !hasAssignee) return sendJson(res, 400, { error: 'assign needs an assignee (or null to clear it)' });
+    if (assignee) {
+      const known = assignee.startsWith('agent:') ? os.agents.has(assignee.slice('agent:'.length)) : !!os.team.getMember(assignee);
+      if (!known) return sendJson(res, 400, { error: `no such agent or member: ${assignee}` });
+    }
+    // "Accept & run": accepting is also the go-ahead to dispatch it now. Only an agent can be dispatched,
+    // and only by someone allowed to run that agent — the same gate as the board's Run button.
+    const run = action === 'accept' && b.run === true;
     const decided: string[] = [];
+    const dispatched: Array<{ id: string; sessionId?: string; error?: string }> = [];
     let denied = 0;
     for (const id of ids) {
       const t = os.tasks.get(id);
       if (!t || t.status !== 'proposed') continue;
       if (!mayDecideProposal(me, t)) { denied++; continue; }
+      if (hasAssignee && (t.assignee ?? null) !== assignee) {
+        os.tasks.update(id, { assignee, by: me.id });
+        os.audit.append({ ts: Date.now(), runId: '-', tenant: os.tenant, principal: me.email, type: 'task.proposal.reassigned', data: { id, from: t.assignee ?? null, to: assignee } });
+      }
+      if (action === 'assign') { decided.push(id); continue; }
+      const target = os.tasks.get(id)?.assignee ?? '';
+      const agentId = target.startsWith('agent:') ? target.slice('agent:'.length) : '';
+      if (run && !agentId) { dispatched.push({ id, error: 'assign an agent to run it' }); continue; }
+      if (run && !os.team.canRun(me, agentId)) { dispatched.push({ id, error: `you are not assigned to run "${agentId}"` }); continue; }
       if (!os.tasks.decideProposal(id, action === 'accept', me.id)) continue;
       decided.push(id);
-      os.audit.append({ ts: Date.now(), runId: '-', tenant: os.tenant, principal: me.email, type: action === 'accept' ? 'task.proposal.accepted' : 'task.proposal.dismissed', data: { id, title: t.title, by: t.createdBy } });
+      os.audit.append({ ts: Date.now(), runId: '-', tenant: os.tenant, principal: me.email, type: action === 'accept' ? 'task.proposal.accepted' : 'task.proposal.dismissed', data: { id, title: t.title, by: t.createdBy, ...(run ? { run: true } : {}) } });
+      if (run) {
+        const r = autos.dispatchTask(id, { guard: false, by: me.email }); // explicit human action, like the board's Run
+        dispatched.push(r.ok ? { id, sessionId: r.sessionId } : { id, error: r.reason });
+      }
     }
     if (!decided.length && denied) return sendJson(res, 403, { error: 'only the person this run acted for, or an owner/admin, can decide these proposals' });
-    return sendJson(res, 200, { ok: true, decided, denied });
+    const failed = dispatched.find((d) => d.error);
+    return sendJson(res, 200, { ok: true, decided, denied, ...(run ? { dispatched } : {}), ...(failed ? { error: failed.error } : {}) });
   }
   if (method === 'POST' && p === '/api/tasks') {
     const b = await readBody(req);

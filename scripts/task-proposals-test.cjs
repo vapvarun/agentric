@@ -180,6 +180,35 @@ const { createHttpServer } = require(path.join(ROOT, 'dist/server.js'));
     assert(cards('ses_d')[0].status === 'rejected', 'and its card closes rather than asking about a task that is gone', cards('ses_d')[0].status);
   }
 
+  console.log('\n\x1b[1m6b) re-assign from the card, and "Accept & run"\x1b[0m');
+  {
+    addSession('ses_r', 'sec-r', alice.id, alice.id); SECRETS.ses_r = 'sec-r';
+    const p1 = await create('ses_r', { title: 'reassign me' });
+    const bad = await member(alice, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'assign', assignee: 'agent:nope' });
+    assert(bad.status === 400, 'an unknown assignee is refused', bad);
+    const byBob = await member(bob, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'assign', assignee: bob.id });
+    assert(byBob.status === 403 && !aos.tasks.get(p1.id).assignee, 'a bystander cannot re-point it', byBob);
+    const toBob = await member(alice, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'assign', assignee: bob.id });
+    const t1 = aos.tasks.get(p1.id);
+    assert(toBob.status === 200 && t1.assignee === bob.id && t1.status === 'proposed', 'assign changes the assignee and leaves it proposed', t1);
+    assert(taskCards(p1.id).length === 0, 'and the new human assignee hears nothing until it is accepted', taskCards(p1.id).length);
+    const cleared = await member(alice, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'assign', assignee: null });
+    assert(cleared.status === 200 && !aos.tasks.get(p1.id).assignee, 'null clears it', aos.tasks.get(p1.id).assignee);
+
+    const noAgent = await member(owner, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'accept', run: true });
+    assert(noAgent.body.error && aos.tasks.get(p1.id).status === 'proposed', 'Accept & run without an agent assignee accepts nothing', noAgent.body);
+    const memberRun = await member(alice, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'accept', run: true, assignee: 'agent:qa' });
+    assert(/not assigned to run/.test(memberRun.body.error || '') && aos.tasks.get(p1.id).status === 'proposed', 'a member who cannot run that agent does not half-accept it', memberRun.body);
+    assert(aos.tasks.get(p1.id).assignee === 'agent:qa', 'though the re-assignment they asked for still lands');
+
+    dispatched.length = 0;
+    const go = await member(owner, 'POST', '/api/tasks/proposals/decide', { ids: [p1.id], action: 'accept', run: true });
+    assert(go.status === 200 && go.body.decided.includes(p1.id) && aos.tasks.get(p1.id).status === 'todo', 'Accept & run accepts it', go.body);
+    assert(dispatched.includes(p1.id) && go.body.dispatched.length === 1, 'and dispatches it in the same click', go.body);
+    const rev = aos.db.prepare("SELECT count(*) n FROM audit_events WHERE type = 'task.proposal.reassigned'").get().n;
+    assert(rev === 3, 'each re-assignment is audited', rev);
+  }
+
   console.log('\n\x1b[1m7) nothing moves INTO proposed; goals ignore it; the queue is capped\x1b[0m');
   {
     const td = aos.tasks.create({ tenant: 'testco', title: 'plain', createdBy: owner.id });
