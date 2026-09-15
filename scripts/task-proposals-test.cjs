@@ -142,6 +142,19 @@ const { createHttpServer } = require(path.join(ROOT, 'dist/server.js'));
     const listed = tm.listMessages(alice, 'mine').find((m) => m.type === 'task.proposed');
     const st = Object.fromEntries(listed.args.tasks.map((x) => [x.id, x.status]));
     assert(st[r3.id] === 'todo' && st[r1.id] === 'proposed', 'the inbox card shows each task\'s LIVE status', st);
+    // The card snapshots only id/title/assignee; what a reviewer decides ON (why, urgency, deadline) is
+    // hydrated from the live task — a bare truncated title is not decidable.
+    const row1 = listed.args.tasks.find((x) => x.id === r1.id);
+    assert(row1.body === 'found while fixing X' && row1.priority === 2 && typeof row1.createdAt === 'number', 'a row carries the live body, priority and filing time', row1);
+    const due = Date.now() + 2 * 3600_000;
+    const rich = await create('ses_a', { title: 'SLA follow-up', body: 'x'.repeat(5000), priority: 0, dueAt: due, labels: ['sla'], criteria: 'customer replied to' });
+    const richRow = tm.listMessages(alice, 'mine').find((m) => m.type === 'task.proposed').args.tasks.find((x) => x.id === rich.id);
+    assert(richRow.dueAt === due && richRow.priority === 0 && richRow.labels[0] === 'sla' && richRow.criteria === 'customer replied to', 'deadline, labels and definition of done ride along', richRow);
+    assert(richRow.body.length < 1300 && richRow.body.endsWith('…'), 'a long body is capped for the card', richRow.body.length);
+    aos.tasks.update(rich.id, { title: 'SLA follow-up (renamed)', by: 'owner' });
+    const renamed = tm.listMessages(alice, 'mine').find((m) => m.type === 'task.proposed').args.tasks.find((x) => x.id === rich.id);
+    assert(renamed.title === 'SLA follow-up (renamed)', 'the title is live too, not the filing snapshot', renamed.title);
+    aos.tasks.update(rich.id, { status: 'cancelled', by: 'owner' }); // out of the way, without a card-decision audit row
 
     await member(alice, 'POST', '/api/tasks/proposals/decide', { ids: [r1.id], action: 'dismiss' });
     assert(aos.tasks.get(r1.id).status === 'cancelled', 'dismissed → cancelled (the record survives)');

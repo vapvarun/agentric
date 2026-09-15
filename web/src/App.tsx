@@ -5125,7 +5125,7 @@ const sessionName = (m: Msg): string => m.type === 'task' ? (m.title || 'Task') 
 function MsgHeading({ m, children }: { m: Msg; children?: ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="truncate text-sm font-medium leading-snug">{sessionName(m)}</div>
+      <div className="truncate text-sm font-medium leading-snug" title={sessionName(m)}>{sessionName(m)}</div>
       <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
         <Bot className="h-3 w-3 shrink-0" />
         <span className="min-w-0 max-w-full truncate">{m.agent}</span>
@@ -6456,7 +6456,7 @@ function InboxPage({ messages: propMessages, me, members, onOpen, onOpenArtifact
           <div className="rounded-lg border border-dashed p-3 text-center text-xs text-muted-foreground">Nothing waiting on you. 🎉</div>
         ) : (
           <div className="space-y-2">
-            {action.map((m) => <ActionItem key={m.id} m={m} me={me} onOpen={onOpen} onDismiss={dismiss} />)}
+            {action.map((m) => <ActionItem key={m.id} m={m} me={me} members={members} onOpen={onOpen} onDismiss={dismiss} />)}
           </div>
         )}
       </section>
@@ -6565,8 +6565,61 @@ function ApprovalBrief({ m }: { m: Msg }) {
   )
 }
 
-/** One task on a `task.proposed` Inbox card — its live status is stamped server-side at read time. */
-type ProposedTaskRow = { id: string; title: string; assignee?: string; status: TaskStatus | 'deleted' }
+/** One task on a `task.proposed` Inbox card — its live state is stamped server-side at read time. */
+type ProposedTaskRow = {
+  id: string; title: string; assignee?: string; status: TaskStatus | 'deleted'
+  body?: string; priority?: number; dueAt?: number; labels?: string[]; criteria?: string; createdAt?: number
+}
+
+/** Hour-precise deadline wording for a proposal — the board's day-granular `dueMeta` would call a task
+ *  that breaches in 2h "Due today", which is exactly the urgency a reviewer needs to see. */
+function proposalDue(dueAt: number): { label: string; tone: string; overdue: boolean } {
+  const ms = dueAt - Date.now()
+  if (ms < 0) return { label: `overdue ${timeAgo(dueAt)}`, tone: 'bg-red-500/15 text-red-700', overdue: true }
+  return { label: `due in ${timeUntil(dueAt)}`, tone: ms < 86_400_000 ? 'text-amber-700' : 'text-muted-foreground', overdue: false }
+}
+
+/** A proposed task, laid out to be decided on: full title, why (body), how urgent, by when, for whom. */
+function ProposedTaskItem({ t, members, busy, onDecide }: { t: ProposedTaskRow; members: Member[]; busy: boolean; onDecide: (action: 'accept' | 'dismiss', ids: string[]) => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const pending = t.status === 'proposed'
+  const due = t.dueAt && pending ? proposalDue(t.dueAt) : null
+  const long = (t.body?.length ?? 0) > 180 || (t.body?.split('\n').length ?? 0) > 2 || !!t.criteria
+  return (
+    <li className={`rounded-md border px-2.5 py-2 text-xs ${pending ? 'border-violet-200 bg-background' : 'border-transparent bg-transparent'}`}>
+      <div className="flex min-w-0 flex-wrap items-start gap-2 sm:flex-nowrap">
+        <div className="min-w-0 flex-1 basis-56">
+          <a href={navHref('tasks', t.id)} className={`line-clamp-2 break-words font-medium no-underline hover:underline ${pending ? 'text-foreground' : 'text-muted-foreground'}`} title={t.title}>{t.title}</a>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            {t.priority !== undefined && <span className="inline-flex items-center gap-1"><PriorityPips p={t.priority} />{PRIORITY_LABEL[t.priority]}</span>}
+            {due && <span className={`inline-flex items-center gap-0.5 rounded px-1 ${due.tone}`}><Clock className="h-3 w-3" />{due.label}</span>}
+            {t.assignee && <span>→ {principalLabel(t.assignee, members)}</span>}
+            {t.labels?.map((l) => <Badge key={l} variant="outline" className="px-1 py-0 text-[10px] font-normal">{l}</Badge>)}
+            {t.createdAt && pending && <span title={new Date(t.createdAt).toLocaleString()}>filed {timeAgo(t.createdAt)} ago</span>}
+          </div>
+        </div>
+        {pending ? (
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => onDecide('accept', [t.id])}><Check className="mr-1 h-3 w-3" />Accept</Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy} onClick={() => onDecide('dismiss', [t.id])}>Dismiss</Button>
+          </div>
+        ) : (
+          <span className="shrink-0 text-[11px] text-muted-foreground">{proposalOutcome(t.status)}</span>
+        )}
+      </div>
+      {pending && (t.body ? (
+        <div className="mt-1.5">
+          <div className={`whitespace-pre-line break-words text-muted-foreground ${expanded ? '' : 'line-clamp-2'}`}><InlineLinks text={t.body} /></div>
+          {expanded && t.criteria && <div className="mt-1 break-words text-muted-foreground"><span className="text-violet-700">done when:</span> {t.criteria}</div>}
+          {long && <button type="button" className="mt-0.5 text-[11px] text-violet-700 hover:underline" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Show less' : 'Show more'}</button>}
+        </div>
+      ) : (
+        <div className="mt-1 text-[11px] italic text-muted-foreground/80">The agent gave no detail — open the run to see why it filed this.</div>
+      ))}
+      {due?.overdue && <div className="mt-1 text-[11px] text-red-700">Past its deadline — accepting now may be too late.</div>}
+    </li>
+  )
+}
 /** How a decided proposal ended, in the card's words. */
 const proposalOutcome = (s: ProposedTaskRow['status']): string =>
   s === 'proposed' ? 'awaiting review' : s === 'cancelled' ? 'dismissed' : s === 'deleted' ? 'deleted' : 'accepted'
@@ -6583,7 +6636,7 @@ const REVIEW_ICON: Record<string, LucideIcon> = {
 /** An action-required item (approval · question · waiting-notification · open review card) — a compact,
  *  coloured card with its controls inline. Pending only; once resolved the item drops into the read-only
  *  Activity feed. */
-function ActionItem({ m, me, onOpen, onDismiss }: { m: Msg; me: Member; onOpen: (tmux: string, title: string) => void; onDismiss: (id: string) => void }) {
+function ActionItem({ m, me, members, onOpen, onDismiss }: { m: Msg; me: Member; members: Member[]; onOpen: (tmux: string, title: string) => void; onDismiss: (id: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [answer, setAnswer] = useState('')
   const [hint, setHint] = useState('')
@@ -6598,7 +6651,7 @@ function ActionItem({ m, me, onOpen, onDismiss }: { m: Msg; me: Member; onOpen: 
   //    status is hydrated live server-side, so a task decided on the board shows decided here too. ──
   if (m.type === 'task.proposed') {
     const tasks = (m.args as { tasks?: ProposedTaskRow[] } | undefined)?.tasks ?? []
-    const open = tasks.filter((t) => t.status === 'proposed')
+    const pending = tasks.filter((t) => t.status === 'proposed')
     const decide = async (action: 'accept' | 'dismiss', ids?: string[]) => {
       setBusy(true); setHint('')
       const r = await api.decideTaskProposals(ids ? { ids, action } : { messageId: m.id, action })
@@ -6613,30 +6666,20 @@ function ActionItem({ m, me, onOpen, onDismiss }: { m: Msg; me: Member; onOpen: 
             <MsgHeading m={m}>
               <Badge variant="outline" className="shrink-0 border-violet-300 px-1.5 py-0 text-[10px] font-normal text-violet-700">{tasks.length === 1 ? 'proposed a task' : `proposed ${tasks.length} tasks`}</Badge>
             </MsgHeading>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">Not on the board until you accept — nobody works them in the meantime.</p>
-            <ul className="mt-1.5 space-y-1">
-              {tasks.map((t) => (
-                <li key={t.id} className="flex min-w-0 items-center gap-2 text-xs">
-                  <a href={navHref('tasks', t.id)} className={`min-w-0 flex-1 truncate no-underline hover:underline ${t.status === 'proposed' ? 'text-foreground' : 'text-muted-foreground'}`}>{t.title}</a>
-                  {t.assignee && <span className="shrink-0 text-[11px] text-muted-foreground">→ {t.assignee.replace(/^agent:/, '')}</span>}
-                  {t.status === 'proposed' ? (
-                    <>
-                      <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => decide('accept', [t.id])}><Check className="mr-1 h-3 w-3" />Accept</Button>
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy} onClick={() => decide('dismiss', [t.id])}>Dismiss</Button>
-                    </>
-                  ) : (
-                    <span className="shrink-0 text-[11px] text-muted-foreground">{proposalOutcome(t.status)}</span>
-                  )}
-                </li>
-              ))}
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Not on the board until you accept — nobody works them in the meantime.
+              {' '}<a href={navHref('sessions', 'aos-' + m.sessionId)} onClick={(e) => { e.preventDefault(); open() }} className="text-violet-700 no-underline hover:underline">View the run</a>
+            </p>
+            <ul className="mt-1.5 space-y-1.5">
+              {tasks.map((t) => <ProposedTaskItem key={t.id} t={t} members={members} busy={busy} onDecide={decide} />)}
             </ul>
           </div>
           {time}
         </div>
-        {(open.length > 1 || hint) && (
+        {(pending.length > 1 || hint) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-6">
-            {open.length > 1 && <Button size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => decide('accept')}>Accept all {open.length}</Button>}
-            {open.length > 1 && <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => decide('dismiss')}>Dismiss all</Button>}
+            {pending.length > 1 && <Button size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => decide('accept')}>Accept all {pending.length}</Button>}
+            {pending.length > 1 && <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => decide('dismiss')}>Dismiss all</Button>}
             {hint && <span className="font-mono text-[11px] text-muted-foreground">{hint}</span>}
           </div>
         )}
