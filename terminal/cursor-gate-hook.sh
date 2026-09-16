@@ -43,7 +43,6 @@ parsed=$(printf '%s' "$EVENT" | node -e '
       if(name==="Shell"||name==="shell"){ cap="shell.exec"; tool="Shell"; input=tin; }
       else if(name==="Write"||name==="Delete"||name==="Edit"||name==="StrReplace"){ cap="file.write"; tool=name; input=tin; }
       else if(name.startsWith("MCP:")||name.startsWith("mcp__")){
-        const server=name.startsWith("MCP:")?"":"";
         if(/agentos/i.test(name)){ console.log(["SKIP","","{}"].join("\x1f")); return; }
         cap="connector.call"; tool=name; input=tin;
       } else {

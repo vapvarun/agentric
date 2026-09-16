@@ -1548,9 +1548,7 @@ export const CODING_RUNTIMES: Readonly<Record<CodingRuntimeId, CodingRuntimeSpec
     id: 'cursor',
     label: 'Cursor Agent',
     bin: 'agent',
-    // Cursor Agent is installed via https://cursor.com/install — not an npm package. The console
-    // "Install" button runs this check; operators who need it install/update with `agent update`.
-    install: ['sh', '-c', 'command -v agent >/dev/null || { echo "Install Cursor Agent CLI from https://cursor.com/docs/cli then re-check" >&2; exit 1; }'],
+    install: ['agent', 'update'],
     launchScript: 'cursor-launch.sh',
     // Cursor's project hooks (`.cursor/hooks.json`) speak allow/deny over JSON stdin/stdout — see
     // terminal/cursor-gate-hook.sh. Wired to beforeShellExecution + beforeMCPExecution + preToolUse.
@@ -1560,9 +1558,8 @@ export const CODING_RUNTIMES: Readonly<Record<CodingRuntimeId, CodingRuntimeSpec
     credentialEnv: { configDirVar: 'CURSOR_CONFIG_DIR', apiKeyVar: 'CURSOR_API_KEY', configDirFile: 'cli-config.json' },
     liveCredentialKinds: ['oauth', 'apikey'],
     guidedLogin: false,
-    suggestedModels: ['auto', 'composer-2.5', 'gpt-5', 'sonnet-4-thinking'],
-    // Cursor accepts many model families; only block ids that are clearly opencode's provider/model form
-    // when missing a slash would still be valid here — leave the guard nearly inert.
+    suggestedModels: ['auto', 'composer-2.5', 'gpt-5'],
+    // Reject ids that are clearly another runtime's wire format.
     foreignModel: /^opencode\//i,
     capabilities: {
       // `agent --resume <chatId>` / `agent create-chat`; we don't pin the id up front.
@@ -1583,6 +1580,22 @@ export const CODING_RUNTIMES: Readonly<Record<CodingRuntimeId, CodingRuntimeSpec
  *  former `runtime === 'claude-code'` check actually meant. */
 export function isCodingRuntime(runtime: RuntimeId | undefined): runtime is CodingRuntimeId {
   return runtime === 'claude-code' || runtime === 'codex' || runtime === 'opencode' || runtime === 'cursor';
+}
+
+/**
+ * Coding runtimes offered in the console / installable on this box.
+ * Set `AOS_VISIBLE_RUNTIMES=cursor` (comma-separated ids) to hide the rest from pickers + setup.
+ * Unset → every declared coding runtime. Adapters stay in the binary for fork/upstream compatibility.
+ */
+export function visibleCodingRuntimes(): CodingRuntimeId[] {
+  const raw = (process.env.AOS_VISIBLE_RUNTIMES || '').trim();
+  if (!raw) return Object.keys(CODING_RUNTIMES) as CodingRuntimeId[];
+  const wanted = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+  return (Object.keys(CODING_RUNTIMES) as CodingRuntimeId[]).filter((id) => wanted.has(id));
+}
+
+export function isVisibleCodingRuntime(runtime: RuntimeId | undefined): runtime is CodingRuntimeId {
+  return isCodingRuntime(runtime) && visibleCodingRuntimes().includes(runtime);
 }
 
 /** The spec for a runtime, or undefined for `mock`/unknown. */

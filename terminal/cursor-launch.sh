@@ -104,7 +104,7 @@ cat > "$AGENT_DIR/.cursor/hooks.json" <<EOF
 EOF
 
 # ── mcp.json (connectors) ─────────────────────────────────────────────────────────
-# Cursor uses the same mcpServers shape as Claude for stdio/http.
+# Cursor uses the same mcpServers shape as other agent CLIs for stdio/http.
 if [ -n "${MCP_CONFIG:-}" ] && [ -f "${MCP_CONFIG}" ]; then
   cp "$MCP_CONFIG" "$AGENT_DIR/.cursor/mcp.json" || {
     red "failed to materialise .cursor/mcp.json"
