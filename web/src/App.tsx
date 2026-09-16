@@ -691,7 +691,10 @@ function isCodingRuntime(runtime?: AgentInfo['runtime']) { return !!runtime && r
 function RuntimeBadge({ runtime }: { runtime: AgentInfo['runtime'] }) {
   // Name the runtime the agent actually runs on. This used to print 'claude' or 'mock', so every
   // codex agent was badged 'mock' — a real agent labelled as the demo adapter.
-  const label = runtime === 'claude-code' ? 'claude' : (runtime || 'mock')
+  const label =
+    runtime === 'claude-code' ? 'claude'
+    : runtime === 'cursor' ? 'cursor'
+    : (runtime || 'mock')
   return (
     <Badge variant={runtime === 'claude-code' ? 'default' : isCodingRuntime(runtime) ? 'outline' : 'secondary'} className="px-1.5 py-0 text-[10px] font-normal">
       {label}
